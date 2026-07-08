@@ -1,10 +1,9 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import yaml
-import os
+from pydantic import BaseModel
 
-load_dotenv()
+API_KEY = "ak_z1qjo0e13k60cx4nijrnnfqh"
+EMAIL = "23f2002608@ds.study.iitm.ac.in"
 
 app = FastAPI()
 
@@ -16,75 +15,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Default configuration
-config = {
-    "port": 8000,
-    "workers": 1,
-    "debug": False,
-    "log_level": "info",
-    "api_key": "default-secret-000",
-}
+class Event(BaseModel):
+    user: str
+    amount: float
+    ts: int
 
-# Load YAML layer
-if os.path.exists("config.development.yaml"):
-    with open("config.development.yaml", "r") as f:
-        data = yaml.safe_load(f)
-        if data:
-            config.update(data)
-
-# Helper to convert to boolean
-def to_bool(value):
-    return str(value).lower() in ["true", "1", "yes", "on"]
-
-# Load .env layer
-if os.getenv("APP_PORT"):
-    config["port"] = int(os.getenv("APP_PORT"))
-
-if os.getenv("NUM_WORKERS"):
-    config["workers"] = int(os.getenv("NUM_WORKERS"))
-
-if os.getenv("APP_DEBUG"):
-    config["debug"] = to_bool(os.getenv("APP_DEBUG"))
-
-if os.getenv("APP_API_KEY"):
-    config["api_key"] = os.getenv("APP_API_KEY")
-
-# Load OS environment variables (highest before CLI)
-if os.getenv("APP_WORKERS"):
-    config["workers"] = int(os.getenv("APP_WORKERS"))
-
-if os.getenv("APP_LOG_LEVEL"):
-    config["log_level"] = os.getenv("APP_LOG_LEVEL")
-
-if os.getenv("APP_PORT"):
-    config["port"] = int(os.getenv("APP_PORT"))
-
-if os.getenv("APP_DEBUG"):
-    config["debug"] = to_bool(os.getenv("APP_DEBUG"))
-
-if os.getenv("APP_API_KEY"):
-    config["api_key"] = os.getenv("APP_API_KEY")
+class AnalyticsRequest(BaseModel):
+    events: list[Event]
 
 
-@app.get("/effective-config")
-def effective_config(set: list[str] = Query(default=[])):
-    result = config.copy()
+@app.post("/analytics")
+def analytics(
+    request: AnalyticsRequest,
+    x_api_key: str = Header(None)
+):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # CLI overrides
-    for item in set:
-        if "=" not in item:
-            continue
+    total_events = len(request.events)
 
-        key, value = item.split("=", 1)
+    unique_users = len(set(event.user for event in request.events))
 
-        if key in ("port", "workers"):
-            result[key] = int(value)
-        elif key == "debug":
-            result[key] = to_bool(value)
-        else:
-            result[key] = value
+    revenue = sum(event.amount for event in request.events if event.amount > 0)
 
-    # Never expose the real API key
-    result["api_key"] = "****"
+    user_totals = {}
+    for event in request.events:
+        if event.amount > 0:
+            user_totals[event.user] = user_totals.get(event.user, 0) + event.amount
 
-    return result
+    top_user = max(user_totals, key=user_totals.get) if user_totals else ""
+
+    return {
+        "email": EMAIL,
+        "total_events": total_events,
+        "unique_users": unique_users,
+        "revenue": revenue,
+        "top_user": top_user,
+    }
